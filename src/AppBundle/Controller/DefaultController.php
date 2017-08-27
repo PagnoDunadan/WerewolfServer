@@ -41,6 +41,7 @@ class DefaultController extends Controller
         $room = new Room();
         $room->setOwner($request->request->get('playerName'));
         $room->setGameStatus('new');
+        $room->setGamePhase('none');
 
         $em->persist($room);
         $em->flush();
@@ -50,7 +51,9 @@ class DefaultController extends Controller
         $game = new Game();
         $game->setRoomId($id);
         $game->setPlayerName($request->request->get('playerName'));
-        $game->setRole('Unspecified');
+        $game->setRole('unspecified');
+        $game->setPlayerStatus('alive');
+        $game->setAction('');
 
         $em->persist($game);
         $em->flush();
@@ -173,13 +176,13 @@ class DefaultController extends Controller
 
         // If game is new, and name is not in use, join
         if ($room->getGameStatus() == 'new') {
-            $names = $em->getRepository(Game::class)->findBy(array(
+            $name = $em->getRepository(Game::class)->findBy(array(
                 'roomId' => $request->request->get('roomId'),
                 'playerName' => $request->request->get('playerName')
             ));
 
             // If name is already in use
-            if ($names) {
+            if ($name) {
                 return new Response('NameInUse');
             }
 
@@ -187,7 +190,9 @@ class DefaultController extends Controller
             $game = new Game();
             $game->setRoomId($request->request->get('roomId'));
             $game->setPlayerName($request->request->get('playerName'));
-            $game->setRole('Unspecified');
+            $game->setRole('unspecified');
+            $game->setPlayerStatus('alive');
+            $game->setAction('');
 
             $em->persist($game);
             $em->flush();
@@ -196,13 +201,14 @@ class DefaultController extends Controller
 
         // If game is in progress, and player is in the game, reconnect
         else if ($room->getGameStatus() == 'inProgress') {
-            $players = $em->getRepository(Game::class)->findBy(array(
+            $player = $em->getRepository(Game::class)->findBy(array(
                 'roomId' => $request->request->get('roomId'),
                 'playerName' => $request->request->get('playerName')
             ));
 
             // If player is in the game, reconnect
-            if ($players) {
+            if ($player) {
+                // TODO: Send game phase and player role
                 return new Response('ReconnectSuccessful');
             }
             // If player is NOT in the game, refuse connection
@@ -211,7 +217,7 @@ class DefaultController extends Controller
             }
         }
 
-        // If game is finished
+        // If game is finished, refuse connection
         else {
             return new Response('GameFinished');
         }
@@ -298,16 +304,16 @@ class DefaultController extends Controller
             else {
                 $randomPlayers[] = $randomNumber;
                 if ($i == 1) {
-                    $players[$randomNumber]->setRole('Seer');
+                    $players[$randomNumber]->setRole('seer');
                 }
                 else if ($i == 2) {
-                    $players[$randomNumber]->setRole('Doctor');
+                    $players[$randomNumber]->setRole('doctor');
                 }
                 else if ($i == 3) {
-                    $players[$randomNumber]->setRole('Werewolf');
+                    $players[$randomNumber]->setRole('werewolf');
                 }
                 else if ($i == 4) {
-                    $players[$randomNumber]->setRole('Werewolf');
+                    $players[$randomNumber]->setRole('werewolf');
                 }
             }
         }
@@ -317,16 +323,90 @@ class DefaultController extends Controller
         $players = $em->getRepository(Game::class)->findBy(array('roomId' => $request->request->get('roomId') ));
 
         foreach ($players as $player) {
-            if ($player->getRole() == 'Unspecified') {
-                $player->setRole('Villager');
+            if ($player->getRole() == 'unspecified') {
+                $player->setRole('villager');
             }
         }
         $em->flush();
 
         $room->setGameStatus('inProgress');
+        $room->setGamePhase('werewolves');
         $em->flush();
 
         return new Response('GameStarted');
+    }
+
+    /**
+     * @Route("/add-players", name="add-players")
+     * @Method("POST")
+     */
+    public function addPlayersAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+        $players = $em->getRepository(Game::class)->findBy(array('roomId' => $request->request->get('roomId') ));
+
+        // If room doesn't exist, remove players
+        if(!$room) {
+            if($players) {
+                foreach ($players as $player) {
+                    $em->remove($player);
+                }
+                $em->flush();
+            }
+            return new Response('RoomNotFound');
+        }
+
+        // If there are no players, delete room
+        if (!$players) {
+            if($room) {
+                $em->remove($room);
+                $em->flush();
+            }
+            return new Response('PlayersNotFound');
+        }
+
+        // TODO: Make add 6 players logic better
+        // Join game 6 times if player doesn't already exist
+        for ($i = 2; $i <= 7; $i++) {
+            $player = $em->getRepository(Game::class)->findBy(array(
+                'roomId' => $request->request->get('roomId'),
+                'playerName' => $request->request->get('playerName').$i
+            ));
+            if(!$player) {
+                $game = new Game();
+                $game->setRoomId($request->request->get('roomId'));
+                $game->setPlayerName($request->request->get('playerName').$i);
+                $game->setRole('unspecified');
+                $game->setPlayerStatus('alive');
+                $game->setAction('');
+
+                $em->persist($game);
+                $em->flush();
+            }
+        }
+
+        return new Response('PlayersAdded');
+    }
+
+    /**
+     * @Route("/fetch-role", name="fetch-role")
+     * @Method("POST")
+     */
+    public function fetchRoleAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $player = $em->getRepository(Game::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
+
+        if(!$player) {
+            return new Response('PlayerNotFound');
+        }
+
+        return new Response($player->getRole());
     }
 
     /**

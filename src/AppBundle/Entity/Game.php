@@ -35,6 +35,17 @@ class Game
      */
     private $role;
 
+    /**
+     * @Assert\NotBlank()
+     * @ORM\Column(type="string")
+     */
+    private $playerStatus;
+
+    /**
+     * @ORM\Column(type="string")
+     */
+    private $action;
+
 
     public function getRoomId()
     {
@@ -64,6 +75,26 @@ class Game
     public function setRole($role)
     {
         $this->role = $role;
+    }
+
+    public function getPlayerStatus()
+    {
+        return $this->playerStatus;
+    }
+
+    public function setPlayerStatus($playerStatus)
+    {
+        $this->playerStatus = $playerStatus;
+    }
+
+    public function getAction()
+    {
+        return $this->action;
+    }
+
+    public function setAction($action)
+    {
+        $this->action = $action;
     }
 
 }

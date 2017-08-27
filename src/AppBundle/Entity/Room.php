@@ -31,6 +31,12 @@ class Room
      */
     private $gameStatus;
 
+    /**
+     * @Assert\NotBlank()
+     * @ORM\Column(type="string")
+     */
+    private $gamePhase;
+
     public function getId()
     {
         return $this->id;
@@ -54,6 +60,16 @@ class Room
     public function setGameStatus($gameStatus)
     {
         $this->gameStatus = $gameStatus;
+    }
+
+    public function getGamePhase()
+    {
+        return $this->gamePhase;
+    }
+
+    public function setGamePhase($gamePhase)
+    {
+        $this->gamePhase = $gamePhase;
     }
 
 }
