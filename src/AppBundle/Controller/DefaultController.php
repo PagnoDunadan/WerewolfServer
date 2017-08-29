@@ -18,16 +18,16 @@ use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
 
 class DefaultController extends Controller
 {
-    /**
-     * @Route("/", name="homepage")
-     */
-    public function indexAction(Request $request)
-    {
-        // replace this example code with whatever you need
-        return $this->render('default/index.html.twig', [
-            'base_dir' => realpath($this->getParameter('kernel.project_dir')).DIRECTORY_SEPARATOR,
-        ]);
-    }
+//    /**
+//     * @Route("/", name="homepage")
+//     */
+//    public function indexAction(Request $request)
+//    {
+//        // replace this example code with whatever you need
+//        return $this->render('default/index.html.twig', [
+//            'base_dir' => realpath($this->getParameter('kernel.project_dir')).DIRECTORY_SEPARATOR,
+//        ]);
+//    }
 
     /**
      * @Route("/create-game", name="create-game")
@@ -224,10 +224,10 @@ class DefaultController extends Controller
     }
 
     /**
-     * @Route("/players-list", name="players-list")
+     * @Route("/players-list-lobby", name="players-list-lobby")
      * @Method("POST")
      */
-    public function playersListAction(Request $request)
+    public function playersListLobbyAction(Request $request)
     {
         $em = $this->getDoctrine()->getManager();
         $players = $em->getRepository(Game::class)->findBy(array('roomId' => $request->request->get('roomId') ));
@@ -410,63 +410,216 @@ class DefaultController extends Controller
     }
 
     /**
-     * @Route("/{genusName}")
+     * @Route("/get-phase", name="get-phase")
+     * @Method("POST")
      */
-    public function showAction($genusName)
+    public function getPhaseAction(Request $request)
     {
+        $em = $this->getDoctrine()->getManager();
 
-        return new Response('The genus: '.$genusName);
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+
+        return new Response($room->getGamePhase());
     }
 
     /**
-     * @Route("/genus2/{genusName}")
+     * @Route("/fetch-count", name="fetch-count")
+     * @Method("POST")
      */
-    public function showAction2($genusName)
+    public function fetchCountAction(Request $request)
     {
-        $notes = [
-            'Octopus asked me a riddle, outsmarted me',
-            'I counted 8 legs... as the wrapped around me',
-            'Inked!'
-        ];
+        $em = $this->getDoctrine()->getManager();
 
-        return $this->render('genus/show2.html.twig', [
-            'name' => $genusName,
-            'notes' => $notes
-        ]);
+        $werewolves = $em->getRepository(Game::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'role' => 'werewolf'
+        ));
 
+        $players = $em->getRepository(Game::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+        ));
+
+        // Return werewolves and villagers (villagers = total number of players - number of werewolves)
+        return new Response(count($werewolves).'||'.(count($players)-count($werewolves)));
     }
 
     /**
-     * @Route("/genus3/{genusName}")
+     * @Route("/players-list-werewolf", name="players-list-werewolf")
+     * @Method("POST")
      */
-    public function showAction3($genusName)
+    public function playersListWerewolfAction(Request $request)
     {
+        $em = $this->getDoctrine()->getManager();
 
-        return $this->render('genus/show3.html.twig', [
-            'name' => $genusName,
-        ]);
+        $players = $em->createQueryBuilder()
+                        ->select('player')
+                        ->from(Game::class, 'player')
+                        ->where('player.roomId = :roomId')
+                        ->setParameter('roomId', $request->request->get('roomId'))
+                        ->andWhere('player.role != :role')
+                        ->setParameter('role', "werewolf")
+                        ->andWhere('player.playerStatus = :status')
+                        ->setParameter('status', "alive")
+                        ->getQuery()
+                        ->getResult();
 
+        foreach ($players as $player) {
+            $oldName = $player->getPlayerName();
+            $votes = $em->createQueryBuilder()
+                ->select('player')
+                ->from(Game::class, 'player')
+                ->where('player.roomId = :roomId')
+                ->setParameter('roomId', $request->request->get('roomId'))
+                ->andWhere('player.role = :role')
+                ->setParameter('role', "werewolf")
+                ->andWhere('player.playerStatus = :status')
+                ->setParameter('status', "alive")
+                ->andWhere('player.action = :action')
+                ->setParameter('action', $oldName)
+                ->getQuery()
+                ->getResult();
+            $votesCount = count($votes);
+            $player->setPlayerName($oldName.' ('.$votesCount.')');
+        }
+
+        $encoders = array(new XmlEncoder(), new JsonEncoder());
+        $normalizers = array(new ObjectNormalizer());
+
+        $serializer = new Serializer($normalizers, $encoders);
+
+        $jsonContent = $serializer->serialize($players, 'json');
+
+        return new Response($jsonContent);
     }
 
     /**
-     * @Route("/genus/{genusName}/notes", name="genus_show_notes")
-     * @Method("GET")
+     * @Route("/werewolf-vote", name="werewolf-vote")
+     * @Method("POST")
      */
-    public function getNotesAction()
+    public function werewolfVoteAction(Request $request)
     {
-        $notes = [
-            ['id' => 1, 'username' => 'AquaPelham', 'avatarUri' => '/images/leanna.jpeg', 'note' => 'Octopus asked me a riddle, outsmarted me', 'date' => 'Dec. 10, 2015'],
-            ['id' => 2, 'username' => 'AquaWeaver', 'avatarUri' => '/images/ryan.jpeg', 'note' => 'I counted 8 legs... as they wrapped around me', 'date' => 'Dec. 1, 2015'],
-            ['id' => 3, 'username' => 'AquaPelham', 'avatarUri' => '/images/leanna.jpeg', 'note' => 'Inked!', 'date' => 'Aug. 20, 2015'],
-        ];
+        $em = $this->getDoctrine()->getManager();
 
-        $data = [
-            'notes' => $notes,
-        ];
+        $player = $em->getRepository(Game::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
 
-        return new JsonResponse($data);
+        $player->setAction($request->request->get('action'));
 
+        $em->flush();
 
-
+        return new Response('VoteSuccessful');
     }
+
+    /**
+     * @Route("/werewolf-confirm", name="werewolf-confirm")
+     * @Method("POST")
+     */
+    public function werewolfConfirmAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $werewolves = $em->getRepository(Game::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'role' => "werewolf",
+            'playerStatus' => "alive"
+        ));
+
+        // Both werewolves must target the same villager
+        $target = "";
+        foreach ($werewolves as $werewolf) {
+            if ($target == "") {
+                $target = $werewolf->getAction();
+            }
+            else if ($target != $werewolf->getAction()) {
+                return new Response('MustTargetSameVillager');
+            }
+        }
+
+        // Kill villager
+        $villager = $em->getRepository(Game::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $target
+        ));
+
+        // If neither werewolf selected target,
+        // technically they have the same target
+        // and here we return NoVotes
+        if (!$villager) {
+            return new Response("NoVotes");
+        }
+
+        $villager->setPlayerStatus('dead');
+
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+        $room->setGamePhase("doctor");
+
+        $em->flush();
+
+        return new Response('KillSuccessful');
+    }
+
+
+//    /**
+//     * @Route("/{genusName}")
+//     */
+//    public function showAction($genusName)
+//    {
+//
+//        return new Response('The genus: '.$genusName);
+//    }
+//
+//    /**
+//     * @Route("/genus2/{genusName}")
+//     */
+//    public function showAction2($genusName)
+//    {
+//        $notes = [
+//            'Octopus asked me a riddle, outsmarted me',
+//            'I counted 8 legs... as the wrapped around me',
+//            'Inked!'
+//        ];
+//
+//        return $this->render('genus/show2.html.twig', [
+//            'name' => $genusName,
+//            'notes' => $notes
+//        ]);
+//
+//    }
+//
+//    /**
+//     * @Route("/genus3/{genusName}")
+//     */
+//    public function showAction3($genusName)
+//    {
+//
+//        return $this->render('genus/show3.html.twig', [
+//            'name' => $genusName,
+//        ]);
+//
+//    }
+//
+//    /**
+//     * @Route("/genus/{genusName}/notes", name="genus_show_notes")
+//     * @Method("GET")
+//     */
+//    public function getNotesAction()
+//    {
+//        $notes = [
+//            ['id' => 1, 'username' => 'AquaPelham', 'avatarUri' => '/images/leanna.jpeg', 'note' => 'Octopus asked me a riddle, outsmarted me', 'date' => 'Dec. 10, 2015'],
+//            ['id' => 2, 'username' => 'AquaWeaver', 'avatarUri' => '/images/ryan.jpeg', 'note' => 'I counted 8 legs... as they wrapped around me', 'date' => 'Dec. 1, 2015'],
+//            ['id' => 3, 'username' => 'AquaPelham', 'avatarUri' => '/images/leanna.jpeg', 'note' => 'Inked!', 'date' => 'Aug. 20, 2015'],
+//        ];
+//
+//        $data = [
+//            'notes' => $notes,
+//        ];
+//
+//        return new JsonResponse($data);
+//
+//
+//
+//    }
+
 }
