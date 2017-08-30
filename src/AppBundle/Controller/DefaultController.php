@@ -739,6 +739,137 @@ class DefaultController extends Controller
         return new Response($player->getPlayerName()." is not a werewolf");
     }
 
+    /**
+     * @Route("/players-list-day", name="players-list-day")
+     * @Method("POST")
+     */
+    public function playersListDayAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Game::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.playerName != :playerName')
+            ->setParameter('playerName', $request->request->get('playerName'))
+            ->andWhere('player.playerStatus = :status')
+            ->setParameter('status', "alive")
+            ->getQuery()
+            ->getResult();
+
+        foreach ($players as $player) {
+            $oldName = $player->getPlayerName();
+            $votes = $em->createQueryBuilder()
+                ->select('player')
+                ->from(Game::class, 'player')
+                ->where('player.roomId = :roomId')
+                ->setParameter('roomId', $request->request->get('roomId'))
+                ->andWhere('player.playerStatus = :status')
+                ->setParameter('status', "alive")
+                ->andWhere('player.action = :action')
+                ->setParameter('action', $oldName)
+                ->getQuery()
+                ->getResult();
+            $votesCount = count($votes);
+            $player->setPlayerName($oldName.' ('.$votesCount.')');
+        }
+
+        $encoders = array(new XmlEncoder(), new JsonEncoder());
+        $normalizers = array(new ObjectNormalizer());
+
+        $serializer = new Serializer($normalizers, $encoders);
+
+        $jsonContent = $serializer->serialize($players, 'json');
+
+        return new Response($jsonContent);
+    }
+
+    /**
+     * @Route("/day-vote", name="doctor-vote")
+     * @Method("POST")
+     */
+    public function dayVoteAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $player = $em->getRepository(Game::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
+
+        $player->setAction($request->request->get('action'));
+
+        $em->flush();
+
+        return new Response('DayVoteSuccessful');
+    }
+
+    /**
+     * @Route("/day-confirm", name="day-confirm")
+     * @Method("POST")
+     */
+    public function dayConfirmAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $players = $em->getRepository(Game::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerStatus' => "alive"
+        ));
+
+        // Check if all players voted
+        foreach ($players as $player) {
+            if ($player->getAction() == "") {
+                return new Response('NoVote');
+            }
+        }
+
+        // Count votes
+        $maxVotes = 0;
+        $maxVotedPlayer = "";
+        foreach ($players as $player) {
+            $votes = $em->createQueryBuilder()
+                ->select('player')
+                ->from(Game::class, 'player')
+                ->where('player.roomId = :roomId')
+                ->setParameter('roomId', $request->request->get('roomId'))
+                ->andWhere('player.playerStatus = :status')
+                ->setParameter('status', "alive")
+                ->andWhere('player.action = :action')
+                ->setParameter('action', $player->getPlayerName())
+                ->getQuery()
+                ->getResult();
+            $votesCount = count($votes);
+            if ($votesCount > $maxVotes) {
+                $maxVotes = $votesCount;
+                $maxVotedPlayer = $player->getPlayerName();
+            }
+        }
+
+        // Kill player
+        $player = $em->getRepository(Game::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $maxVotedPlayer
+        ));
+        $em->remove($player);
+
+        // Clear actions
+        foreach ($players as $player) {
+            $player->setAction("");
+        }
+
+        $em->flush();
+
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+        $room->setGamePhase("werewolves");
+
+        $em->flush();
+
+        return new Response('VoteSuccessful');
+    }
+
 
 
 //    /**
