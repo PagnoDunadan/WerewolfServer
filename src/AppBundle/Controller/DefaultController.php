@@ -420,6 +420,7 @@ class DefaultController extends Controller
         $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
 
         return new Response($room->getGamePhase());
+//        return new Response("doctor");
     }
 
     /**
@@ -509,7 +510,7 @@ class DefaultController extends Controller
 
         $em->flush();
 
-        return new Response('VoteSuccessful');
+        return new Response('WerewolfVoteSuccessful');
     }
 
     /**
@@ -537,20 +538,17 @@ class DefaultController extends Controller
             }
         }
 
-        // Kill villager
+        // If neither werewolf selected target,
+        // technically they have the same target
+        // and here we return NoVotes
         $villager = $em->getRepository(Game::class)->findOneBy(array(
             'roomId' => $request->request->get('roomId'),
             'playerName' => $target
         ));
 
-        // If neither werewolf selected target,
-        // technically they have the same target
-        // and here we return NoVotes
         if (!$villager) {
             return new Response("NoVotes");
         }
-
-        $villager->setPlayerStatus('dead');
 
         $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
         $room->setGamePhase("doctor");
@@ -559,6 +557,188 @@ class DefaultController extends Controller
 
         return new Response('KillSuccessful');
     }
+
+    /**
+     * @Route("/players-list-doctor", name="players-list-doctor")
+     * @Method("POST")
+     */
+    public function playersListDoctorAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Game::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.playerStatus = :status')
+            ->setParameter('status', "alive")
+            ->getQuery()
+            ->getResult();
+
+        foreach ($players as $player) {
+            $oldName = $player->getPlayerName();
+            $votes = $em->createQueryBuilder()
+                ->select('player')
+                ->from(Game::class, 'player')
+                ->where('player.roomId = :roomId')
+                ->setParameter('roomId', $request->request->get('roomId'))
+                ->andWhere('player.role = :role')
+                ->setParameter('role', "doctor")
+                ->andWhere('player.playerStatus = :status')
+                ->setParameter('status', "alive")
+                ->andWhere('player.action = :action')
+                ->setParameter('action', $oldName)
+                ->getQuery()
+                ->getResult();
+            $votesCount = count($votes);
+            $player->setPlayerName($oldName.' ('.$votesCount.')');
+        }
+
+        $encoders = array(new XmlEncoder(), new JsonEncoder());
+        $normalizers = array(new ObjectNormalizer());
+
+        $serializer = new Serializer($normalizers, $encoders);
+
+        $jsonContent = $serializer->serialize($players, 'json');
+
+        return new Response($jsonContent);
+    }
+
+    /**
+     * @Route("/doctor-vote", name="doctor-vote")
+     * @Method("POST")
+     */
+    public function doctorVoteAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $player = $em->getRepository(Game::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
+
+        $player->setAction($request->request->get('action'));
+
+        $em->flush();
+
+        return new Response('DoctorVoteSuccessful');
+    }
+
+    /**
+     * @Route("/doctor-confirm", name="doctor-confirm")
+     * @Method("POST")
+     */
+    public function doctorConfirmAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $doctor = $em->getRepository(Game::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'role' => "doctor",
+            'playerStatus' => "alive"
+        ));
+
+        // TODO: Check if doctor is alive
+
+        // Check if doctor voted
+        if ($doctor->getAction() == "") {
+            return new Response('NoVote');
+        }
+
+        $werewolves = $em->getRepository(Game::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'role' => "werewolf",
+            'playerStatus' => "alive"
+        ));
+
+        $werewolvesTarget = $werewolves[0]->getAction();
+        $doctorTarget = $doctor->getAction();
+        if ($doctorTarget == $werewolvesTarget) {
+            $player = $em->getRepository(Game::class)->findOneBy(array(
+                'roomId' => $request->request->get('roomId'),
+                'playerName' => $doctorTarget
+            ));
+            $player->setPlayerStatus("revived");
+        }
+        else {
+            $player = $em->getRepository(Game::class)->findOneBy(array(
+                'roomId' => $request->request->get('roomId'),
+                'playerName' => $werewolvesTarget
+            ));
+            $player->setPlayerStatus("dead");
+        }
+
+        // Clear actions
+        foreach ($werewolves as $werewolf) {
+            $werewolf->setAction("");
+        }
+        $doctor->setAction("");
+        $em->flush();
+
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+        $room->setGamePhase("seer");
+
+        $em->flush();
+
+        return new Response('HealSuccessful');
+    }
+
+    /**
+     * @Route("/players-list-seer", name="players-list-seer")
+     * @Method("POST")
+     */
+    public function playersListSeerAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Game::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.role != :role')
+            ->setParameter('role', "seer")
+            ->andWhere('player.playerStatus = :status')
+            ->setParameter('status', "alive")
+            ->getQuery()
+            ->getResult();
+
+        $encoders = array(new XmlEncoder(), new JsonEncoder());
+        $normalizers = array(new ObjectNormalizer());
+
+        $serializer = new Serializer($normalizers, $encoders);
+
+        $jsonContent = $serializer->serialize($players, 'json');
+
+        return new Response($jsonContent);
+    }
+
+    /**
+     * @Route("/seer-vote", name="seer-vote")
+     * @Method("POST")
+     */
+    public function seerVoteAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $player = $em->getRepository(Game::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('action')
+        ));
+
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+
+        $room->setGamePhase('day');
+        $em->flush();
+
+        if ($player->getRole() == "werewolf") {
+            return new Response($player->getPlayerName()." is a WEREWOLF!");
+        }
+
+        return new Response($player->getPlayerName()." is not a werewolf");
+    }
+
 
 
 //    /**
