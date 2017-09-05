@@ -787,7 +787,7 @@ class DefaultController extends Controller
     }
 
     /**
-     * @Route("/day-vote", name="doctor-vote")
+     * @Route("/day-vote", name="day-vote")
      * @Method("POST")
      */
     public function dayVoteAction(Request $request)
@@ -814,6 +814,7 @@ class DefaultController extends Controller
     {
         $em = $this->getDoctrine()->getManager();
 
+        // TODO: Ne cita revived playera, POPRAVIT TO!
         $players = $em->getRepository(Game::class)->findBy(array(
             'roomId' => $request->request->get('roomId'),
             'playerStatus' => "alive"
@@ -853,7 +854,7 @@ class DefaultController extends Controller
             'roomId' => $request->request->get('roomId'),
             'playerName' => $maxVotedPlayer
         ));
-        $em->remove($player);
+        $player->setPlayerStatus("dead");
 
         // Clear actions
         foreach ($players as $player) {
