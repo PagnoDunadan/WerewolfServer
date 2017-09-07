@@ -254,6 +254,7 @@ class DefaultController extends Controller
             if ($player) {
                 if ($room->getGamePhase() != 'showRoles') {
                     $player->setAction('reconnecting');
+                    $em->flush();
                 }
                 return new Response('ReconnectSuccessful');
             }
@@ -282,6 +283,217 @@ class DefaultController extends Controller
         ));
 
         return new Response($player->getRole());
+    }
+
+    /**
+     * @Route("/show-roles-ready", name="show-roles-ready")
+     * @Method("POST")
+     */
+    public function showRolesReadyAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        // If player action == reconnecting, send ready
+        $player = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
+
+        if ($player->getAction() == 'reconnecting') {
+            $player->setAction('');
+            $em->flush();
+            return new Response('Reconnecting');
+        }
+
+        // Otherwise, count ready players and set current user action to ready if it is not already set
+        $players = $em->getRepository(Player::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+        ));
+
+        $readyCounter = 0;
+        foreach ($players as $player) {
+            if ($player->getAction() == 'ready') {
+                $readyCounter++;
+            }
+            else if ($player->getPlayerName() == $request->request->get('playerName')) {
+                $player->setAction('ready');
+                $em->flush();
+                $readyCounter++;
+            }
+        }
+
+        // If all players are ready, clear all actions and start game, otherwise send number of ready players
+        if ($readyCounter == count($players)) {
+            foreach ($players as $player) {
+                $player->setAction('');
+            }
+            $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+            $room->setGamePhase('werewolves');
+            $em->flush();
+            return new Response('EveryoneReady');
+        }
+
+        return new Response('Players ready: ' . $readyCounter . '/' . count($players));
+    }
+
+    /**
+     * @Route("/fetch-count", name="fetch-count")
+     * @Method("POST")
+     */
+    public function fetchCountAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+        $players = $em->getRepository(Player::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerStatus' => 'alive'
+        ));
+
+        $werewolvesCount = 0;
+        foreach ($players as $player) {
+            if ($player->getRole() == "werewolf") {
+                $werewolvesCount++;
+            }
+        }
+
+        // Return werewolves and villagers (villagers = total number of players - number of werewolves)
+        return new Response($werewolvesCount.'||'.(count($players)-$werewolvesCount));
+    }
+
+    /**
+     * @Route("/werewolf-players-list", name="werewolf-players-list")
+     * @Method("POST")
+     */
+    public function werewolfPlayersListAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $players = $em->createQueryBuilder()
+                        ->select('player')
+                        ->from(Player::class, 'player')
+                        ->where('player.roomId = :roomId')
+                        ->setParameter('roomId', $request->request->get('roomId'))
+                        ->andWhere('player.role != :role')
+                        ->setParameter('role', "werewolf")
+                        ->andWhere('player.playerStatus = :status')
+                        ->setParameter('status', "alive")
+                        ->getQuery()
+                        ->getResult();
+
+        foreach ($players as $player) {
+            $oldName = $player->getPlayerName();
+            $votes = $em->createQueryBuilder()
+                ->select('player')
+                ->from(Player::class, 'player')
+                ->where('player.roomId = :roomId')
+                ->setParameter('roomId', $request->request->get('roomId'))
+                ->andWhere('player.role = :role')
+                ->setParameter('role', "werewolf")
+                ->andWhere('player.playerStatus = :status')
+                ->setParameter('status', "alive")
+                ->andWhere('player.action = :action')
+                ->setParameter('action', $oldName)
+                ->getQuery()
+                ->getResult();
+            $votesCount = count($votes);
+            $player->setPlayerName($oldName.' ('.$votesCount.')');
+        }
+
+        $encoders = array(new XmlEncoder(), new JsonEncoder());
+        $normalizers = array(new ObjectNormalizer());
+
+        $serializer = new Serializer($normalizers, $encoders);
+
+        $jsonContent = $serializer->serialize($players, 'json');
+
+        return new Response($jsonContent);
+    }
+
+    /**
+     * @Route("/werewolf-vote", name="werewolf-vote")
+     * @Method("POST")
+     */
+    public function werewolfVoteAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+        $player = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
+
+        $player->setAction($request->request->get('action'));
+
+        $em->flush();
+
+        return new Response('WerewolfVoteSuccessful');
+    }
+
+    /**
+     * @Route("/werewolf-confirm", name="werewolf-confirm")
+     * @Method("POST")
+     */
+    public function werewolfConfirmAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $werewolves = $em->getRepository(Player::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'role' => "werewolf",
+            'playerStatus' => "alive"
+        ));
+
+        // Both werewolves must target the same villager
+        $target = "";
+        foreach ($werewolves as $werewolf) {
+            if ($target == "") {
+                $target = $werewolf->getAction();
+            }
+            else if ($target != $werewolf->getAction()) {
+                return new Response('MustTargetSameVillager');
+            }
+        }
+
+        // If neither werewolf selected target,
+        // technically they have the same target
+        // and we return NoVotes
+        if ($target == "") {
+            return new Response("NoVotes");
+        }
+
+        // Set target villager playerStatus to killed and room gamePhase to doctor, seer or day
+        $villager = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $target
+        ));
+        $villager->setPlayerStatus("killed");
+
+        // TODO: FIX PHASE AFTER WEREWOLF KILL
+        // Fetch all alive players (killed player is not yet flushed)
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+        $players = $em->getRepository(Player::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerStatus' => "alive"
+        ));
+
+        // Set default game phase to day
+        $room->setGamePhase("day");
+
+        // If either doctor or seer are alive, change game phase
+        foreach ($players as $player) {
+            if ($player->getRole() == "doctor") {
+                $room->setGamePhase("doctor");
+                break;
+            }
+            else if ($player->getRole() == "seer") {
+                $room->setGamePhase("seer");
+                break;
+            }
+        }
+
+        $em->flush();
+
+        // TODO: POCISTIT ACTIONE VUKODLAKA
+
+        return new Response('KillSuccessful');
     }
 }
 
