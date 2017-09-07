@@ -7,9 +7,9 @@ use Symfony\Component\Validator\Constraints as Assert;
 
 /**
  * @ORM\Entity
- * @ORM\Table(name="game")
+ * @ORM\Table(name="player")
  */
-class Game
+class Player
 {
     /**
      * @ORM\Id
