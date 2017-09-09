@@ -343,10 +343,16 @@ class DefaultController extends Controller
     public function fetchCountAction(Request $request)
     {
         $em = $this->getDoctrine()->getManager();
-        $players = $em->getRepository(Player::class)->findBy(array(
-            'roomId' => $request->request->get('roomId'),
-            'playerStatus' => 'alive'
-        ));
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.playerStatus != :status1 OR player.playerStatus != :status2')
+            ->setParameter('status1', "dead")
+            ->setParameter('status2', "killed")
+            ->getQuery()
+            ->getResult();
 
         $werewolvesCount = 0;
         foreach ($players as $player) {
@@ -466,8 +472,13 @@ class DefaultController extends Controller
         ));
         $villager->setPlayerStatus("killed");
 
-        // TODO: FIX PHASE AFTER WEREWOLF KILL
-        // Fetch all alive players (killed player is not yet flushed)
+        // Clear werewolves actions
+        foreach ($werewolves as $werewolf) {
+            $werewolf->setAction("");
+        }
+
+        // Fetch all alive players (killed player is not yet flushed
+        // which means that this search will include killed doctor or seer)
         $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
         $players = $em->getRepository(Player::class)->findBy(array(
             'roomId' => $request->request->get('roomId'),
@@ -477,23 +488,393 @@ class DefaultController extends Controller
         // Set default game phase to day
         $room->setGamePhase("day");
 
-        // If either doctor or seer are alive, change game phase
+        // If doctor is alive, change game phase
         foreach ($players as $player) {
             if ($player->getRole() == "doctor") {
                 $room->setGamePhase("doctor");
                 break;
             }
-            else if ($player->getRole() == "seer") {
-                $room->setGamePhase("seer");
-                break;
+        }
+        // If doctor was not alive, look for seer
+        if ($room->getGamePhase() == "day") {
+            foreach ($players as $player) {
+                if ($player->getRole() == "seer") {
+                    $room->setGamePhase("seer");
+                    break;
+                }
             }
         }
 
         $em->flush();
 
-        // TODO: POCISTIT ACTIONE VUKODLAKA
-
         return new Response('KillSuccessful');
+    }
+
+    /**
+     * @Route("/doctor-players-list", name="doctor-players-list")
+     * @Method("POST")
+     */
+    public function doctorPlayersListAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+            ->setParameter('status1', "alive")
+            ->setParameter('status2', "killed")
+            ->getQuery()
+            ->getResult();
+
+        foreach ($players as $player) {
+            $oldName = $player->getPlayerName();
+            $votes = $em->createQueryBuilder()
+                ->select('player')
+                ->from(Player::class, 'player')
+                ->where('player.roomId = :roomId')
+                ->setParameter('roomId', $request->request->get('roomId'))
+                ->andWhere('player.role = :role')
+                ->setParameter('role', "doctor")
+                ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+                ->setParameter('status1', "alive")
+                ->setParameter('status2', "killed")
+                ->andWhere('player.action = :action')
+                ->setParameter('action', $oldName)
+                ->getQuery()
+                ->getResult();
+            $votesCount = count($votes);
+            $player->setPlayerName($oldName.' ('.$votesCount.')');
+        }
+
+        $encoders = array(new XmlEncoder(), new JsonEncoder());
+        $normalizers = array(new ObjectNormalizer());
+
+        $serializer = new Serializer($normalizers, $encoders);
+
+        $jsonContent = $serializer->serialize($players, 'json');
+
+        return new Response($jsonContent);
+    }
+
+    /**
+     * @Route("/doctor-vote", name="doctor-vote")
+     * @Method("POST")
+     */
+    public function doctorVoteAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $player = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
+
+        $player->setAction($request->request->get('action'));
+
+        $em->flush();
+
+        return new Response('DoctorVoteSuccessful');
+    }
+
+    /**
+     * @Route("/doctor-confirm", name="doctor-confirm")
+     * @Method("POST")
+     */
+    public function doctorConfirmAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        // Check if doctor voted
+        $doctor = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'role' => "doctor"
+        ));
+        if ($doctor->getAction() == "") {
+            return new Response('NoVote');
+        }
+
+        // If target is killed, change playerStatus to revived. Clear doctor action
+        $target = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $doctor->getAction()
+        ));
+        if ($target->getPlayerStatus() == "killed") {
+            $target->setPlayerStatus('revived');
+        }
+        $doctor->setAction('');
+
+        // Check if seer is alive and setGamePhase accordingly
+        // (revived is not yet flushed if doctor healed seer)
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+        $seer = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.role = :role')
+            ->setParameter('role', "seer")
+            ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+            ->setParameter('status1', "alive")
+            ->setParameter('status2', "killed")
+            ->getQuery()
+            ->getResult();
+
+        if ($seer) {
+            $room->setGamePhase("seer");
+        }
+        else {
+            $room->setGamePhase("day");
+        }
+
+        $em->flush();
+
+        return new Response('HealSuccessful');
+    }
+
+    /**
+     * @Route("/seer-players-list", name="seer-players-list")
+     * @Method("POST")
+     */
+    public function seerPlayersListAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.role != :role')
+            ->setParameter('role', "seer")
+            ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2 OR player.playerStatus = :status3')
+            ->setParameter('status1', "alive")
+            ->setParameter('status2', "killed")
+            ->setParameter('status3', "revived")
+            ->getQuery()
+            ->getResult();
+
+        $encoders = array(new XmlEncoder(), new JsonEncoder());
+        $normalizers = array(new ObjectNormalizer());
+
+        $serializer = new Serializer($normalizers, $encoders);
+
+        $jsonContent = $serializer->serialize($players, 'json');
+
+        return new Response($jsonContent);
+    }
+
+    /**
+     * @Route("/seer-vote", name="seer-vote")
+     * @Method("POST")
+     */
+    public function seerVoteAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $player = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('action')
+        ));
+
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+
+        $room->setGamePhase('day');
+        $em->flush();
+
+        if ($player->getRole() == "werewolf") {
+            return new Response($player->getPlayerName()." is a WEREWOLF!");
+        }
+
+        return new Response($player->getPlayerName()." is not a werewolf");
+    }
+
+    /**
+     * @Route("/day-players-list", name="day-players-list")
+     * @Method("POST")
+     */
+    public function playersListDayAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        // All players who are alive or revived and not current user
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.playerName != :playerName')
+            ->setParameter('playerName', $request->request->get('playerName'))
+            ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+            ->setParameter('status1', "alive")
+            ->setParameter('status2', "revived")
+            ->getQuery()
+            ->getResult();
+
+        foreach ($players as $player) {
+            $oldName = $player->getPlayerName();
+            $votes = $em->createQueryBuilder()
+                ->select('player')
+                ->from(Player::class, 'player')
+                ->where('player.roomId = :roomId')
+                ->setParameter('roomId', $request->request->get('roomId'))
+                ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+                ->setParameter('status1', "alive")
+                ->setParameter('status2', "revived")
+                ->andWhere('player.action = :action')
+                ->setParameter('action', $oldName)
+                ->getQuery()
+                ->getResult();
+            $votesCount = count($votes);
+            $player->setPlayerName($oldName.' ('.$votesCount.')');
+        }
+
+        $encoders = array(new XmlEncoder(), new JsonEncoder());
+        $normalizers = array(new ObjectNormalizer());
+
+        $serializer = new Serializer($normalizers, $encoders);
+
+        $jsonContent = $serializer->serialize($players, 'json');
+
+        return new Response($jsonContent);
+    }
+
+    /**
+     * @Route("/day-vote", name="day-vote")
+     * @Method("POST")
+     */
+    public function dayVoteAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $player = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
+
+        $player->setAction($request->request->get('action'));
+
+        $em->flush();
+
+        return new Response('DayVoteSuccessful');
+    }
+
+    /**
+     * @Route("/day-confirm", name="day-confirm")
+     * @Method("POST")
+     */
+    public function dayConfirmAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        // Check if all alive and revived players voted
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+            ->setParameter('status1', "alive")
+            ->setParameter('status2', "revived")
+            ->getQuery()
+            ->getResult();
+
+        foreach ($players as $player) {
+            if ($player->getAction() == "") {
+                return new Response('NoVote');
+            }
+        }
+
+        // Count votes
+        $maxVotes = 0;
+        $secondMaxVotes = 0;
+        $maxVotedPlayer = "";
+        foreach ($players as $player) {
+            $votes = $em->createQueryBuilder()
+                ->select('player')
+                ->from(Player::class, 'player')
+                ->where('player.roomId = :roomId')
+                ->setParameter('roomId', $request->request->get('roomId'))
+                ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+                ->setParameter('status1', "alive")
+                ->setParameter('status2', "revived")
+                ->andWhere('player.action = :action')
+                ->setParameter('action', $player->getPlayerName())
+                ->getQuery()
+                ->getResult();
+            $votesCount = count($votes);
+            if ($votesCount >= $maxVotes) {
+                $secondMaxVotes = $maxVotes;
+                $maxVotes = $votesCount;
+                $maxVotedPlayer = $player->getPlayerName();
+            }
+        }
+        // If two or more players have the same number of votes
+        if ($maxVotes == $secondMaxVotes) {
+            return new Response('SameNumberOfVotes');
+        }
+
+        // Kill max voted player and clear all actions
+        foreach ($players as $player) {
+            if ($player->getPlayerName() == $maxVotedPlayer) {
+                $player->setPlayerStatus("dead");
+            }
+            $player->setAction("");
+        }
+        $em->flush();
+
+        // Change playerStatus killed => dead and revived => alive and calculate new gamePhase
+        $room = $em->getRepository(Room::class)->find($request->request->get('roomId'));
+        $players = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.playerStatus != :status')
+            ->setParameter('status', "dead")
+            ->getQuery()
+            ->getResult();
+
+        foreach ($players as $player) {
+            if ($player->getPlayerStatus() == "killed") {
+                $player->setPlayerStatus('dead');
+            }
+            else if ($player->getPlayerStatus() == "revived") {
+                $player->setPlayerStatus('alive');
+            }
+        }
+
+        // If all werewolves are dead gamePhase = VillagersVictory
+        // else if number of villagers == number of werewolves or total number of players <= 4, WerewolvesVictory
+        $werewolvesCount = 0;
+        $villagersCount = 0;
+        foreach ($players as $player) {
+            if ($player->getRole() == "werewolf" && $player->getPlayerStatus() == "alive") {
+                $werewolvesCount++;
+            }
+            else if (($player->getRole() == "villager" && $player->getPlayerStatus() == "alive")) {
+                $villagersCount++;
+            }
+        }
+        if ($werewolvesCount == 0) {
+            $room->setGamePhase('VillagersVictory');
+            $room->setGameStatus('finished');
+        }
+        else if ($villagersCount == $werewolvesCount) {
+            $room->setGamePhase('WerewolvesVictory');
+            $room->setGameStatus('finished');
+        }
+        else if (count($players) <= 4) {
+            $room->setGamePhase('WerewolvesVictory');
+            $room->setGameStatus('finished');
+        }
+
+        $em->flush();
+
+        // Return if killed player is a werewolf
+        return new Response('VoteSuccessful');
     }
 }
 
