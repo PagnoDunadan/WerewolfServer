@@ -348,9 +348,9 @@ class DefaultController extends Controller
             ->from(Player::class, 'player')
             ->where('player.roomId = :roomId')
             ->setParameter('roomId', $request->request->get('roomId'))
-            ->andWhere('player.playerStatus != :status1 OR player.playerStatus != :status2')
-            ->setParameter('status1', "dead")
-            ->setParameter('status2', "killed")
+            ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+            ->setParameter('status1', "alive")
+            ->setParameter('status2', "revived")
             ->getQuery()
             ->getResult();
 
@@ -854,27 +854,68 @@ class DefaultController extends Controller
             if ($player->getRole() == "werewolf" && $player->getPlayerStatus() == "alive") {
                 $werewolvesCount++;
             }
-            else if (($player->getRole() == "villager" && $player->getPlayerStatus() == "alive")) {
+            else if (( ($player->getRole() == "villager" || ($player->getRole() == "doctor") || ($player->getRole() == "seer")) && $player->getPlayerStatus() == "alive")) {
                 $villagersCount++;
             }
         }
         if ($werewolvesCount == 0) {
-            $room->setGamePhase('VillagersVictory');
+            $room->setGamePhase('villagersVictory');
             $room->setGameStatus('finished');
         }
         else if ($villagersCount == $werewolvesCount) {
-            $room->setGamePhase('WerewolvesVictory');
+            $room->setGamePhase('werewolvesVictory');
             $room->setGameStatus('finished');
         }
         else if (count($players) <= 4) {
-            $room->setGamePhase('WerewolvesVictory');
+            $room->setGamePhase('werewolvesVictory');
             $room->setGameStatus('finished');
+        }
+        else {
+            $room->setGamePhase('werewolves');
         }
 
         $em->flush();
 
-        // Return if killed player is a werewolf
         return new Response('VoteSuccessful');
+    }
+
+    /**
+     * @Route("/fetch-player-status", name="fetch-player-status")
+     * @Method("POST")
+     */
+    public function fetchPlayerStatusAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $player = $em->getRepository(Player::class)->findOneBy(array(
+            'roomId' => $request->request->get('roomId'),
+            'playerName' => $request->request->get('playerName')
+        ));
+
+        return new Response($player->getPlayerStatus());
+    }
+
+    /**
+     * @Route("/fetch-night-recap", name="fetch-night-recap")
+     * @Method("POST")
+     */
+    public function fetchNightRecapAction(Request $request)
+    {
+        $em = $this->getDoctrine()->getManager();
+
+        $players = $em->getRepository(Player::class)->findBy(array(
+            'roomId' => $request->request->get('roomId'),
+        ));
+
+        foreach ($players as $player) {
+            if ($player->getPlayerStatus() == "killed") {
+                return new Response($player->getPlayerName()."||killed");
+            }
+            else if ($player->getPlayerStatus() == "revived") {
+                return new Response($player->getPlayerName()."||revived");
+            }
+        }
+        return new Response('');
     }
 }
 
