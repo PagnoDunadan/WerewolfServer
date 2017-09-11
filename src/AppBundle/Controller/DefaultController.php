@@ -447,22 +447,19 @@ class DefaultController extends Controller
             'playerStatus' => "alive"
         ));
 
-        // Both werewolves must target the same villager
+        // Both werewolves must vote and both have to target the same villager
         $target = "";
+
         foreach ($werewolves as $werewolf) {
-            if ($target == "") {
+            if ($werewolf->getAction() == "") {
+                return new Response("NoVotes");
+            }
+            else if ($target == "") {
                 $target = $werewolf->getAction();
             }
             else if ($target != $werewolf->getAction()) {
                 return new Response('MustTargetSameVillager');
             }
-        }
-
-        // If neither werewolf selected target,
-        // technically they have the same target
-        // and we return NoVotes
-        if ($target == "") {
-            return new Response("NoVotes");
         }
 
         // Set target villager playerStatus to killed and room gamePhase to doctor, seer or day
