@@ -19,6 +19,17 @@ use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
 class DefaultController extends Controller
 {
     /**
+     * @Route("/", name="homepage")
+     */
+    public function indexAction(Request $request)
+    {
+        // replace this example code with whatever you need
+        return $this->render('default/index.html.twig', [
+            'base_dir' => realpath($this->getParameter('kernel.project_dir')).DIRECTORY_SEPARATOR,
+        ]);
+    }
+
+    /**
      * @Route("/create-game", name="create-game")
      * @Method("POST")
      */
