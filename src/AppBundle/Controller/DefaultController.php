@@ -395,22 +395,46 @@ class DefaultController extends Controller
                         ->getQuery()
                         ->getResult();
 
+//        foreach ($players as $player) {
+//            $oldName = $player->getPlayerName();
+//            $votes = $em->createQueryBuilder()
+//                ->select('player')
+//                ->from(Player::class, 'player')
+//                ->where('player.roomId = :roomId')
+//                ->setParameter('roomId', $request->request->get('roomId'))
+//                ->andWhere('player.role = :role')
+//                ->setParameter('role', "werewolf")
+//                ->andWhere('player.playerStatus = :status')
+//                ->setParameter('status', "alive")
+//                ->andWhere('player.action = :action')
+//                ->setParameter('action', $oldName)
+//                ->getQuery()
+//                ->getResult();
+//            $votesCount = count($votes);
+//            $player->setPlayerName($oldName.' ('.$votesCount.')');
+//        }
+
+        // Experimental
+        $werewolves = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.role = :role')
+            ->setParameter('role', "werewolf")
+            ->andWhere('player.playerStatus = :status')
+            ->setParameter('status', "alive")
+            ->getQuery()
+            ->getResult();
+
         foreach ($players as $player) {
             $oldName = $player->getPlayerName();
-            $votes = $em->createQueryBuilder()
-                ->select('player')
-                ->from(Player::class, 'player')
-                ->where('player.roomId = :roomId')
-                ->setParameter('roomId', $request->request->get('roomId'))
-                ->andWhere('player.role = :role')
-                ->setParameter('role', "werewolf")
-                ->andWhere('player.playerStatus = :status')
-                ->setParameter('status', "alive")
-                ->andWhere('player.action = :action')
-                ->setParameter('action', $oldName)
-                ->getQuery()
-                ->getResult();
-            $votesCount = count($votes);
+            $votesCount = 0;
+            foreach ($werewolves as $werewolf) {
+                if ($werewolf->getAction() == $oldName) {
+                    $votesCount++;
+                }
+            }
             $player->setPlayerName($oldName.' ('.$votesCount.')');
         }
 
@@ -536,23 +560,48 @@ class DefaultController extends Controller
             ->getQuery()
             ->getResult();
 
+//        foreach ($players as $player) {
+//            $oldName = $player->getPlayerName();
+//            $votes = $em->createQueryBuilder()
+//                ->select('player')
+//                ->from(Player::class, 'player')
+//                ->where('player.roomId = :roomId')
+//                ->setParameter('roomId', $request->request->get('roomId'))
+//                ->andWhere('player.role = :role')
+//                ->setParameter('role', "doctor")
+//                ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+//                ->setParameter('status1', "alive")
+//                ->setParameter('status2', "killed")
+//                ->andWhere('player.action = :action')
+//                ->setParameter('action', $oldName)
+//                ->getQuery()
+//                ->getResult();
+//            $votesCount = count($votes);
+//            $player->setPlayerName($oldName.' ('.$votesCount.')');
+//        }
+
+        // Experimental
+        $doctors = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.role = :role')
+            ->setParameter('role', "doctor")
+            ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+            ->setParameter('status1', "alive")
+            ->setParameter('status2', "killed")
+            ->getQuery()
+            ->getResult();
+
         foreach ($players as $player) {
             $oldName = $player->getPlayerName();
-            $votes = $em->createQueryBuilder()
-                ->select('player')
-                ->from(Player::class, 'player')
-                ->where('player.roomId = :roomId')
-                ->setParameter('roomId', $request->request->get('roomId'))
-                ->andWhere('player.role = :role')
-                ->setParameter('role', "doctor")
-                ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
-                ->setParameter('status1', "alive")
-                ->setParameter('status2', "killed")
-                ->andWhere('player.action = :action')
-                ->setParameter('action', $oldName)
-                ->getQuery()
-                ->getResult();
-            $votesCount = count($votes);
+            $votesCount = 0;
+            foreach ($doctors as $doctor) {
+                if ($doctor->getAction() == $oldName) {
+                    $votesCount++;
+                }
+            }
             $player->setPlayerName($oldName.' ('.$votesCount.')');
         }
 
@@ -720,21 +769,44 @@ class DefaultController extends Controller
             ->getQuery()
             ->getResult();
 
+//        foreach ($players as $player) {
+//            $oldName = $player->getPlayerName();
+//            $votes = $em->createQueryBuilder()
+//                ->select('player')
+//                ->from(Player::class, 'player')
+//                ->where('player.roomId = :roomId')
+//                ->setParameter('roomId', $request->request->get('roomId'))
+//                ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+//                ->setParameter('status1', "alive")
+//                ->setParameter('status2', "revived")
+//                ->andWhere('player.action = :action')
+//                ->setParameter('action', $oldName)
+//                ->getQuery()
+//                ->getResult();
+//            $votesCount = count($votes);
+//            $player->setPlayerName($oldName.' ('.$votesCount.')');
+//        }
+
+        //Experimental
+        $villagers = $em->createQueryBuilder()
+            ->select('player')
+            ->from(Player::class, 'player')
+            ->where('player.roomId = :roomId')
+            ->setParameter('roomId', $request->request->get('roomId'))
+            ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
+            ->setParameter('status1', "alive")
+            ->setParameter('status2', "revived")
+            ->getQuery()
+            ->getResult();
+
         foreach ($players as $player) {
             $oldName = $player->getPlayerName();
-            $votes = $em->createQueryBuilder()
-                ->select('player')
-                ->from(Player::class, 'player')
-                ->where('player.roomId = :roomId')
-                ->setParameter('roomId', $request->request->get('roomId'))
-                ->andWhere('player.playerStatus = :status1 OR player.playerStatus = :status2')
-                ->setParameter('status1', "alive")
-                ->setParameter('status2', "revived")
-                ->andWhere('player.action = :action')
-                ->setParameter('action', $oldName)
-                ->getQuery()
-                ->getResult();
-            $votesCount = count($votes);
+            $votesCount = 0;
+            foreach ($villagers as $villager) {
+                if ($villager->getAction() == $oldName) {
+                    $votesCount++;
+                }
+            }
             $player->setPlayerName($oldName.' ('.$votesCount.')');
         }
 
