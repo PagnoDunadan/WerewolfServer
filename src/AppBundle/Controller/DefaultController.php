@@ -19,13 +19,21 @@ use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
 class DefaultController extends Controller
 {
     /**
-     * @Route("/", name="homepage")
+     * @Route("/", name="root")
      */
     public function indexAction(Request $request)
     {
         return $this->render('default/index.html.twig', [
             'base_dir' => realpath($this->getParameter('kernel.project_dir')).DIRECTORY_SEPARATOR,
         ]);
+    }
+
+    /**
+     * @Route("/werewolf", name="homepage")
+     * @Method("GET")
+     */
+    public function homepageAction(Request $request) {
+        return $this->render('default/werewolf.html.twig');
     }
 
     /**
